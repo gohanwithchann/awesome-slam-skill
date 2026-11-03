@@ -1,6 +1,6 @@
 ---
 name: awesome-slam
-description: Architectural decision guide, algorithmic taxonomy, mathematical formulation, and engineering workflows for SLAM (Simultaneous Localization and Mapping), Visual Odometry (VO), Visual-Inertial Odometry (VIO), and LiDAR SLAM derived from the curated Awesome-SLAM collection and academic literature. Use when designing, selecting, implementing, or debugging SLAM systems, choosing between Monocular, Stereo, RGB-D, Visual-Inertial (ORB-SLAM3, VINS-Fusion, Basalt, SVO, DSO), or LiDAR pipelines (Cartographer, LOAM, LeGO-LOAM, LIO-SAM, FAST-LIO), configuring factor graph optimization (g2o, GTSAM, Ceres), applying Lie theory (SO(3), SE(3), Sophus, manif), camera/IMU calibration (Kalibr), or integrating learned and semantic SLAM.
+description: Architectural decision guide, algorithmic taxonomy, mathematical formulation, and engineering workflows for SLAM (Simultaneous Localization and Mapping), Visual Odometry (VO), Visual-Inertial Odometry (VIO), and LiDAR SLAM derived from the curated Awesome-SLAM collection and academic literature. Use when designing, selecting, implementing, or debugging SLAM systems, choosing between Monocular, Stereo, RGB-D, Visual-Inertial (ORB-SLAM3, VINS-Fusion, Basalt, SVO, DSO), or LiDAR pipelines (Cartographer, LOAM, LeGO-LOAM, LIO-SAM, FAST-LIO), configuring factor graph optimization (g2o, GTSAM, Ceres), applying Lie theory (SO(3), SE(3), Sophus, manif), camera/IMU calibration (Kalibr), or integrating learned and semantic SLAM. Also covers modern trends (2021-2026): learned dense SLAM (DROID-SLAM, DROID-W), marginalization-as-factor backends (OKVIS2, OKVIS2-X, Basalt NFR), LiDAR bundle adjustment (BALM, BALM 2.0, LVBA), modern LIO map structures (Super-LIO, Surfel-LIO, LIMOncello, FAST-LIVO2, Omni-LIVO), degeneracy-aware registration (GenZ-LIO, Azimuth-LIO, BTSA, COIN-LIO), dynamic point removal (DUFOMap, BeautyMap, ITSC23 benchmark), lifelong localization (LiLoc, LL-Localizer, TreeLoc), and evidence-based LIO parameter tuning.
 ---
 
 # Awesome SLAM: Architecture, Optimization & System Design
@@ -23,6 +23,11 @@ Select the optimal SLAM pipeline based on sensor payload, environmental constrai
 | **3D LiDAR (LIO / LOAM)** | **[FAST-LIO](references/lidar-slam.md)**, **[LIO-SAM](references/lidar-slam.md)**, **[LeGO-LOAM](references/lidar-slam.md)** | Medium (Embedded CPU like Jetson) | All-weather autonomous driving, forestry, mining | Long symmetric tunnels / open fields (geometric degeneracy); heavy sensor weight & cost |
 | **2D LiDAR** | **[Cartographer](references/lidar-slam.md)**, **[Gmapping](references/lidar-slam.md)** | Low (Raspberry Pi class) | Indoor vacuum robots, planar warehouse AGVs | 2D planar assumption fails on slopes, ramps, or uneven terrain |
 | **Semantic & Learned SLAM** | **[DS-SLAM](references/learning-and-semantic-slam.md)**, **[SuMa++](references/learning-and-semantic-slam.md)**, **[Pop-up SLAM](references/learning-and-semantic-slam.md)** | High (GPU Acceleration) | Dynamic urban environments with pedestrians/cars | High GPU power consumption, latency in real-time edge processing |
+| **Dense Learned SLAM (GPU)** | **[DROID-SLAM / DROID-W](references/modern-trends.md)** | High (GPU ≥8 GB, RTX-class) | Robustness-critical tracking, dynamic scenes, offline SfM-grade accuracy | ~10–20 FPS, GPU power; initialization needs ≥12 frames with flow >16 px; mono scale unobservable |
+| **Multi-modal LIVO (LiDAR-Visual-Inertial)** | **[FAST-LIVO2](references/modern-trends.md)**, **[Omni-LIVO](references/modern-trends.md)**, **[PL-LIVO](references/modern-trends.md)** | Medium-High (i7/Orin) | Degenerate geometry (dark, corridors) where LiDAR or vision alone fails | Sequential-update conditional independence weakens under LiDAR degeneracy; ARM headroom is thin |
+| **Modern LIO (2024–26 map structures)** | **[Super-LIO](references/modern-trends.md)**, **[Surfel-LIO](references/modern-trends.md)**, **[LIMOncello](references/modern-trends.md)**, **[COIN-LIO](references/modern-trends.md)** | Low-Medium (embedded CPU) | Long-duration runs (ikd-Tree's 10.7 GB growth is the ceiling these escape) | Super-LIO trades plane info for bounded memory; COIN-LIO needs ≥32-line LiDAR |
+| **Degeneracy-aware / Dynamic-robust LIO** | **[GenZ-LIO](references/modern-trends.md)**, **[Azimuth-LIO](references/modern-trends.md)**, **[BTSA](references/modern-trends.md)**, **[DAMM-LOAM](references/modern-trends.md)** | Low-Medium | Tunnels, rotation-heavy scenes, dynamic pedestrians on roads | Most assume ground-plane (xy) motion — fails on slopes without gravity re-anchoring |
+| **Lifelong / Map-maintenance Localization** | **[LiLoc](references/modern-trends.md)**, **[LL-Localizer](references/modern-trends.md)**, **[TreeLoc](references/modern-trends.md)** | Low-Medium | Same-site daily re-mapping (service/mowing robots), forest global localization | Central-session growth unbounded (LiLoc); update policies can't separate parked cars from real changes |
 
 ---
 
@@ -125,6 +130,16 @@ Before compiling or running any SLAM algorithm, calibrate sensors:
 3. **Scale Drift in Monocular Pipelines**:
    - Monocular SLAM accumulates scale drift over loops.
    - *Fix*: Enable loop closure with $Sim(3)$ optimization (**ORB-SLAM3**) or incorporate metric depth sensors / IMU.
+4. **LiDAR Degeneracy (tunnels, open fields, long corridors)**:
+   - Point-to-plane ICP loses rank in symmetric/featureless geometry; the Hessian's minimum eigenvalue → 0.
+   - *Fix (graded)*: add IMU short-integration prior as fallback term (**Super Odometry** pattern); add intensity-map photometric patches (**COIN-LIO**, needs ≥32-line LiDAR); use line features (**PL-LIVO** — corridors are line-rich); consider SGal(3) propagation (**LIMOncello**) which keeps covariance consistent under low observability.
+5. **Dynamic Contamination (pedestrians, vehicles)**:
+   - Detect-then-remove at the *map* layer: void-voxel ray-casting (**DUFOMap**), bitwise-AND occupancy diff (**BeautyMap**), unified benchmark **ITSC23** with AA = √(SA×DA) (never mix with harmonic-mean HA).
+   - For the *odometry* layer: stability-gated residuals inside registration (**BTSA**) avoid the circular detect→localize dependency.
+   - Known residue: slow-moving objects (parked-then-moved cars, pausing pedestrians) defeat both void and diff criteria — combine with writable-map policies (**LL-Localizer**).
+6. **ikd-Tree Unbounded Memory Growth (long-duration LIO)**:
+   - Measured 10.7 GB / 248 ms on OS1-128 (**LIMOncello**).
+   - *Fix*: voxel-hash family with bounded density — **Super-LIO** OctVox (4.5× ARM speedup), **Surfel-LIO** hVox (pre-computed surfels, 0.05 µs/pt NN), or **Lightning-LM** iVox pipeline.
 
 ---
 
@@ -137,6 +152,7 @@ Explore the modular domain references in the `references/` directory:
 - 📡 [LiDAR-based SLAM Reference](references/lidar-slam.md) — 2D/3D LOAM, LeGO-LOAM, LIO-SAM, FAST-LIO, Cartographer.
 - 📐 [Optimization & Math Reference](references/optimization-and-math.md) — Lie groups, factor graphs, g2o, GTSAM, Ceres, and calibration toolkits.
 - 🧠 [Learning-based & Semantic SLAM Reference](references/learning-and-semantic-slam.md) — SuperPoint, deep features, dynamic object filtering, semantic surfel mapping.
+- 🚀 [Modern Trends (2021–2026) Reference](references/modern-trends.md) — DROID-SLAM/DROID-W learned dense SLAM, OKVIS2/OKVIS2-X/Basalt marginalization-as-factor line, BALM/BALM2.0/LVBA LiDAR BA theory, modern LIO map structures (Super-LIO, Surfel-LIO, LIMOncello, COIN-LIO, FAST-LIVO2), degeneracy-aware registration, dynamic point removal (DUFOMap, BeautyMap, ITSC23 benchmark), lifelong localization (LiLoc, LL-Localizer, TreeLoc), and evidence-based FAST-LIO2/Cartographer tuning.
 - 📚 [Local Offline Papers Catalog](references/papers-catalog.md) — Complete registry of the 111 downloaded research papers and documents stored locally in the skill's [`papers/`](papers/) directory.
 
 ---
